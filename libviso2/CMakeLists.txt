@@ -1,5 +1,5 @@
 SET(HAVE_TOON FALSE) #Georg Klein's M-estimator for incremental motion
-SET(HAVE_OPENCV TRUE) #five-point algorithm to estimate incremental motion
+SET(HAVE_OPENCV FALSE) #five-point algorithm to estimate incremental motion
 SET(USE_SYSTEM_OPENCV TRUE) # Set False if you want to build this package using independent OpenCV instead of libopencv-dev, will be ignored if HAVE_OPENCV is false
 SET(HAVE_FIVEPOINT_NGHIAHO FALSE) #use Nghia Ho's five point implementation
 # project
@@ -41,14 +41,13 @@ MESSAGE("CMAKE_CXX_FLAGS:" ${CMAKE_CXX_FLAGS})
 # use sse3 instruction set
 SET(CMAKE_CXX_FLAGS "-msse3")
 
-include_directories(include)
+include_directories(include/viso2)
 
 IF(HAVE_TOON)
-  SET(TOON_INCLUDE_DIR $ENV{HOME}/ScaViSLAM/svslocal/include)
+  SET(TOON_INCLUDE_DIR $ENV{HOME}/TooN)
   include_directories(${TOON_INCLUDE_DIR})
 ENDIF()
 
- 
 # add opencv libraries for 5 point algorithm
 IF(HAVE_OPENCV)
   IF(USE_SYSTEM_OPENCV)
@@ -75,9 +74,9 @@ LIST(APPEND SOURCEFILES
 src/filter.cpp
 src/matcher.cpp
 src/matrix.cpp
-include/p_match.h
+include/viso2/p_match.h
 
-#include/timer.h
+#include/viso2/timer.h
 #src/reconstruction.cpp
 
 src/triangle.cpp
@@ -88,7 +87,7 @@ src/viso_stereo.cpp
 
 IF(HAVE_TOON)
 LIST(APPEND SOURCEFILES
-include/MEstimator.h
+include/viso2/MEstimator.h
 src/TrackerData.cpp)
 ENDIF()
 

@@ -63,11 +63,13 @@ public:
   //                     an older coordinate system / time step than the previous one.
   // output: returns false if motion too small or an error occured
   bool process (uint8_t *I,int32_t* dims,bool replace=false);
+#ifdef USE_OPENCV
   //changed update motion method w.r.t process(), method 0 opencv 5 point algorithm, 1, viso2 monocular algorithm
   bool process2 (uint8_t *I,int32_t* dims,bool replace=false, bool bUseViso2=false);
   // use opencv five point algorithm to estimate monocular motion, method 0 opencv 5 point algorithm, 1, viso2 monocular algorithm
   std::vector<double> estimateMotion2 (const std::vector<p_match> &p_matched,
                                                      bool bUseViso2= false);
+#endif
 private:
 
   template<class T> struct idx_cmp {

@@ -43,6 +43,7 @@ bool VisualOdometryMono::process (uint8_t *I,int32_t* dims,bool replace) {
   p_matched = matcher->getMatches();
   return updateMotion();
 }
+#ifdef USE_OPENCV
 bool VisualOdometryMono::process2 (uint8_t *I,int32_t* dims,bool replace, bool bUseViso2) {
   matcher->pushBack(I,dims,replace);
   matcher->matchFeatures(0);
@@ -64,6 +65,7 @@ bool VisualOdometryMono::process2 (uint8_t *I,int32_t* dims,bool replace, bool b
   // success
   return true;
 }
+#endif
 
 vector<double> VisualOdometryMono::estimateMotion (const vector<p_match> &p_matched,
                                                    const std::vector<double> tr_delta_init) {
@@ -187,6 +189,7 @@ vector<double> VisualOdometryMono::estimateMotion (const vector<p_match> &p_matc
   return tr_delta;
 }
 
+#ifdef USE_OPENCV
 vector<double> VisualOdometryMono::estimateMotion2 (const vector<p_match> &p_matched,
                                                     bool bUseViso2) {
     Matrix R= Matrix(3,3);
@@ -322,6 +325,8 @@ vector<double> VisualOdometryMono::estimateMotion2 (const vector<p_match> &p_mat
     tr_delta[5] = t.val[2][0];
     return tr_delta;
 }
+#endif
+
 Matrix VisualOdometryMono::smallerThanMedian (Matrix &X,double &median) {
   
   // set distance and index vector
