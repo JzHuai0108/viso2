@@ -21,6 +21,7 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 
 #include "viso_mono.h"
 #ifdef USE_OPENCV
+#include <opencv2/core/core.hpp>
 #include "five-point.h"
 #endif
 #ifdef USE_NGHIAHO
@@ -42,27 +43,6 @@ bool VisualOdometryMono::process (uint8_t *I,int32_t* dims,bool replace) {
   matcher->bucketFeatures(param.bucket.max_features,param.bucket.bucket_width,param.bucket.bucket_height);                          
   p_matched = matcher->getMatches();
   return updateMotion();
-}
-bool VisualOdometryMono::process2 (uint8_t *I,int32_t* dims,bool replace, bool bUseViso2) {
-  matcher->pushBack(I,dims,replace);
-  matcher->matchFeatures(0);
-  p_all_matched= matcher->getMatches();
-  matcher->bucketFeatures(param.bucket.max_features,param.bucket.bucket_width,param.bucket.bucket_height);
-  p_matched = matcher->getMatches();
-
-  // estimate motion
-  vector<double> tr_delta = estimateMotion2(p_matched, bUseViso2);
-
-  // on failure
-  if (tr_delta.size()!=6)
-    return false;
-
-  // set transformation matrix (previous to current frame)
-  Tr_delta = transformationVectorToMatrix(tr_delta);
-  Tr_valid = true;
-
-  // success
-  return true;
 }
 
 vector<double> VisualOdometryMono::estimateMotion (const vector<p_match> &p_matched,
@@ -185,6 +165,30 @@ vector<double> VisualOdometryMono::estimateMotion (const vector<p_match> &p_matc
   tr_delta[4] = t.val[1][0];
   tr_delta[5] = t.val[2][0];
   return tr_delta;
+}
+
+#ifdef USE_OPENCV
+
+bool VisualOdometryMono::process2 (uint8_t *I,int32_t* dims,bool replace, bool bUseViso2) {
+  matcher->pushBack(I,dims,replace);
+  matcher->matchFeatures(0);
+  p_all_matched= matcher->getMatches();
+  matcher->bucketFeatures(param.bucket.max_features,param.bucket.bucket_width,param.bucket.bucket_height);
+  p_matched = matcher->getMatches();
+
+  // estimate motion
+  vector<double> tr_delta = estimateMotion2(p_matched, bUseViso2);
+
+  // on failure
+  if (tr_delta.size()!=6)
+    return false;
+
+  // set transformation matrix (previous to current frame)
+  Tr_delta = transformationVectorToMatrix(tr_delta);
+  Tr_valid = true;
+
+  // success
+  return true;
 }
 
 vector<double> VisualOdometryMono::estimateMotion2 (const vector<p_match> &p_matched,
@@ -322,6 +326,8 @@ vector<double> VisualOdometryMono::estimateMotion2 (const vector<p_match> &p_mat
     tr_delta[5] = t.val[2][0];
     return tr_delta;
 }
+#endif
+
 Matrix VisualOdometryMono::smallerThanMedian (Matrix &X,double &median) {
   
   // set distance and index vector

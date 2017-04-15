@@ -11,7 +11,7 @@ catkin_package(
   LIBRARIES viso2
 )
 
-include_directories(libviso2/src
+include_directories(libviso2/include/viso2
   ${catkin_INCLUDE_DIRS}
 )
 

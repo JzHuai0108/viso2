@@ -44,7 +44,7 @@ SET(CMAKE_CXX_FLAGS "-msse3")
 include_directories(include)
 
 IF(HAVE_TOON)
-  SET(TOON_INCLUDE_DIR $ENV{HOME}/ScaViSLAM/svslocal/include)
+  SET(TOON_INCLUDE_DIR $ENV{HOME}/TooN)
   include_directories(${TOON_INCLUDE_DIR})
 ENDIF()
 
@@ -75,9 +75,8 @@ LIST(APPEND SOURCEFILES
 src/filter.cpp
 src/matcher.cpp
 src/matrix.cpp
-include/p_match.h
+include/viso2/p_match.h
 
-#include/timer.h
 #src/reconstruction.cpp
 
 src/triangle.cpp
