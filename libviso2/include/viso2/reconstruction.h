@@ -31,6 +31,7 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 
 #include "matcher.h"
 #include "matrix.h"
+namespace libviso2 {
 
 class Reconstruction {
 
@@ -63,7 +64,7 @@ public:
   // min_track_length ... min number of frames a point needs to be tracked for reconstruction
   // max_dist ........... maximum point distance from camera
   // min_angle .......... avoid angles smaller than this for reconstruction (in degrees)
-  void update (std::vector<Matcher::p_match> p_matched,Matrix Tr,int32_t point_type=1,int32_t min_track_length=2,double max_dist=30,double min_angle=2);
+  void update (std::vector<p_match> p_matched,Matrix Tr,int32_t point_type=1,int32_t min_track_length=2,double max_dist=30,double min_angle=2);
   
   // return currently computed 3d points (finished tracks)
   std::vector<point3d> getPoints() { return points; }
@@ -108,5 +109,5 @@ private:
   FLOAT *p_observe,*p_predict;  // observed and predicted 2d points
 
 };
-
+}
 #endif // RECONSTRUCTION_H

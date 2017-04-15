@@ -18,16 +18,176 @@ You should have received a copy of the GNU General Public License along with
 libviso2; if not, write to the Free Software Foundation, Inc., 51 Franklin
 Street, Fifth Floor, Boston, MA 02110-1301, USA 
 */
-
+#include<cassert> //for assert()
 #include "matcher.h"
 #include "triangle.h"
 #include "filter.h"
-
+#include <fstream> //for ofstream test
 using namespace std;
 
 //////////////////////
 // PUBLIC FUNCTIONS //
 //////////////////////
+namespace libviso2{
+void makeOffsets(int pixel[25], int rowStride, int patternSize)
+{
+    static const int offsets16[][2] =
+    {
+        {0,  3}, { 1,  3}, { 2,  2}, { 3,  1}, { 3, 0}, { 3, -1}, { 2, -2}, { 1, -3},
+        {0, -3}, {-1, -3}, {-2, -2}, {-3, -1}, {-3, 0}, {-3,  1}, {-2,  2}, {-1,  3}
+    };
+
+    static const int offsets12[][2] =
+    {
+        {0,  2}, { 1,  2}, { 2,  1}, { 2, 0}, { 2, -1}, { 1, -2},
+        {0, -2}, {-1, -2}, {-2, -1}, {-2, 0}, {-2,  1}, {-1,  2}
+    };
+
+    static const int offsets8[][2] =
+    {
+        {0,  1}, { 1,  1}, { 1, 0}, { 1, -1},
+        {0, -1}, {-1, -1}, {-1, 0}, {-1,  1}
+    };
+
+    const int (*offsets)[2] = patternSize == 16 ? offsets16 :
+                              patternSize == 12 ? offsets12 :
+                              patternSize == 8  ? offsets8  : 0;
+
+    assert(pixel && offsets);
+
+    int k = 0;
+    for( ; k < patternSize; k++ )
+        pixel[k] = offsets[k][0] + offsets[k][1] * rowStride;
+    for( ; k < 25; k++ )
+        pixel[k] = pixel[k - patternSize];
+}
+
+#if VERIFY_CORNERS
+static void testCorner(const uchar* ptr, const int pixel[], int K, int N, int threshold) {
+    // check that with the computed "threshold" the pixel is still a corner
+    // and that with the increased-by-1 "threshold" the pixel is not a corner anymore
+    for( int delta = 0; delta <= 1; delta++ )
+    {
+        int v0 = std::min(ptr[0] + threshold + delta, 255);
+        int v1 = std::max(ptr[0] - threshold - delta, 0);
+        int c0 = 0, c1 = 0;
+
+        for( int k = 0; k < N; k++ )
+        {
+            int x = ptr[pixel[k]];
+            if(x > v0)
+            {
+                if( ++c0 > K )
+                    break;
+                c1 = 0;
+            }
+            else if( x < v1 )
+            {
+                if( ++c1 > K )
+                    break;
+                c0 = 0;
+            }
+            else
+            {
+                c0 = c1 = 0;
+            }
+        }
+        assert( (delta == 0 && std::max(c0, c1) > K) ||
+                   (delta == 1 && std::max(c0, c1) <= K) );
+    }
+}
+#endif
+
+template<>
+int cornerScore<16>(const unsigned char* ptr, const int pixel[], int threshold)
+{
+    const int K = 8, N = K*3 + 1;
+    int k, v = ptr[0];
+    short d[N];
+    for( k = 0; k < N; k++ )
+        d[k] = (short)(v - ptr[pixel[k]]);
+
+#if CV_SSE2
+    __m128i q0 = _mm_set1_epi16(-1000), q1 = _mm_set1_epi16(1000);
+    for( k = 0; k < 16; k += 8 )
+    {
+        __m128i v0 = _mm_loadu_si128((__m128i*)(d+k+1));
+        __m128i v1 = _mm_loadu_si128((__m128i*)(d+k+2));
+        __m128i a = _mm_min_epi16(v0, v1);
+        __m128i b = _mm_max_epi16(v0, v1);
+        v0 = _mm_loadu_si128((__m128i*)(d+k+3));
+        a = _mm_min_epi16(a, v0);
+        b = _mm_max_epi16(b, v0);
+        v0 = _mm_loadu_si128((__m128i*)(d+k+4));
+        a = _mm_min_epi16(a, v0);
+        b = _mm_max_epi16(b, v0);
+        v0 = _mm_loadu_si128((__m128i*)(d+k+5));
+        a = _mm_min_epi16(a, v0);
+        b = _mm_max_epi16(b, v0);
+        v0 = _mm_loadu_si128((__m128i*)(d+k+6));
+        a = _mm_min_epi16(a, v0);
+        b = _mm_max_epi16(b, v0);
+        v0 = _mm_loadu_si128((__m128i*)(d+k+7));
+        a = _mm_min_epi16(a, v0);
+        b = _mm_max_epi16(b, v0);
+        v0 = _mm_loadu_si128((__m128i*)(d+k+8));
+        a = _mm_min_epi16(a, v0);
+        b = _mm_max_epi16(b, v0);
+        v0 = _mm_loadu_si128((__m128i*)(d+k));
+        q0 = _mm_max_epi16(q0, _mm_min_epi16(a, v0));
+        q1 = _mm_min_epi16(q1, _mm_max_epi16(b, v0));
+        v0 = _mm_loadu_si128((__m128i*)(d+k+9));
+        q0 = _mm_max_epi16(q0, _mm_min_epi16(a, v0));
+        q1 = _mm_min_epi16(q1, _mm_max_epi16(b, v0));
+    }
+    q0 = _mm_max_epi16(q0, _mm_sub_epi16(_mm_setzero_si128(), q1));
+    q0 = _mm_max_epi16(q0, _mm_unpackhi_epi64(q0, q0));
+    q0 = _mm_max_epi16(q0, _mm_srli_si128(q0, 4));
+    q0 = _mm_max_epi16(q0, _mm_srli_si128(q0, 2));
+    threshold = (short)_mm_cvtsi128_si32(q0) - 1;
+#else
+    int a0 = threshold;
+    for( k = 0; k < 16; k += 2 )
+    {
+        int a = std::min((int)d[k+1], (int)d[k+2]);
+        a = std::min(a, (int)d[k+3]);
+        if( a <= a0 )
+            continue;
+        a = std::min(a, (int)d[k+4]);
+        a = std::min(a, (int)d[k+5]);
+        a = std::min(a, (int)d[k+6]);
+        a = std::min(a, (int)d[k+7]);
+        a = std::min(a, (int)d[k+8]);
+        a0 = std::max(a0, std::min(a, (int)d[k]));
+        a0 = std::max(a0, std::min(a, (int)d[k+9]));
+    }
+
+    int b0 = -a0;
+    for( k = 0; k < 16; k += 2 )
+    {
+        int b = std::max((int)d[k+1], (int)d[k+2]);
+        b = std::max(b, (int)d[k+3]);
+        b = std::max(b, (int)d[k+4]);
+        b = std::max(b, (int)d[k+5]);
+        if( b >= b0 )
+            continue;
+        b = std::max(b, (int)d[k+6]);
+        b = std::max(b, (int)d[k+7]);
+        b = std::max(b, (int)d[k+8]);
+
+        b0 = std::min(b0, std::max(b, (int)d[k]));
+        b0 = std::min(b0, std::max(b, (int)d[k+9]));
+    }
+
+    threshold = -b0-1;
+#endif
+
+#if VERIFY_CORNERS
+    testCorner(ptr, pixel, K, N, threshold);
+#endif
+    return threshold;
+}
+
 
 // constructor (with default parameters)
 Matcher::Matcher(parameters param) : param(param) {
@@ -179,8 +339,49 @@ void Matcher::pushBack (uint8_t *I1,uint8_t* I2,int32_t* dims,const bool replace
   if (I2!=0)
     computeFeatures(I2c,dims_c,m2c1,n2c1,m2c2,n2c2,I2c_du,I2c_dv,I2c_du_full,I2c_dv_full);
 }
+// this seems not to improve accuracy
+void Matcher::refineFeatures(std::vector<p_match> & vMatches)
+{
+    //refine locations of features in current left image using FAST corner score
+    if(param.half_resolution)
+    {
+       const int patternSize=16;
+       int pixel[25];
+       int32_t bpl    = dims_c[2];
+       int buf[5]={0, -bpl, bpl, -1, 1}; // center, up, down, left, right
 
-void Matcher::matchFeatures(int32_t method, Matrix *Tr_delta) {
+       makeOffsets(pixel, dims_c[0], patternSize);
+       // pattern size 16, window size 7x7, while here descriptors are computed with 11x11 window
+       for(unsigned int nFeat=0; nFeat<vMatches.size(); ++nFeat){
+           int max_score=0, score=0, max_id=-1;
+           unsigned char *ptr= I1c + getAddressOffsetImage(vMatches[nFeat].u1c,vMatches[nFeat].v1c,bpl);
+           for( int i=0; i< 5; ++i){
+               score=cornerScore<patternSize>(ptr+buf[i], pixel, 1);
+               if(score>max_score)
+               {
+                   max_score=score;
+                   max_id=i;
+               }
+           }
+           switch(max_id){
+           case 1:
+               --vMatches[nFeat].v1c;
+               break;
+               case 2:
+               ++vMatches[nFeat].v1c;
+               break;
+               case 3:
+               --vMatches[nFeat].u1c;
+               break;
+               case 4:
+               ++vMatches[nFeat].u1c;
+               break;
+           default: break; //cerr<<"error in refineFeatures!"<<endl;
+           }
+       }
+    }
+}
+void Matcher::matchFeatures(int32_t method, const Matrix *Tr_delta) {
   
   //////////////////
   // sanity check //
@@ -227,15 +428,19 @@ void Matcher::matchFeatures(int32_t method, Matrix *Tr_delta) {
 
     // 2nd pass (dense matches)
     matching(m1p2,m2p2,m1c2,m2c2,n1p2,n2p2,n1c2,n2c2,p_matched_2,method,true,Tr_delta);
-    if (param.refinement>0)
-      refinement(p_matched_2,method);
+    if (param.refinement>0){
+  //      refineFeatures(p_matched_2);//refine u1c v1c
+        refinement(p_matched_2,method);// refine others
+    }
     removeOutliers(p_matched_2,method);
 
   // single pass matching
   } else {
     matching(m1p2,m2p2,m1c2,m2c2,n1p2,n2p2,n1c2,n2c2,p_matched_2,method,false,Tr_delta);
-    if (param.refinement>0)
-      refinement(p_matched_2,method);
+    if (param.refinement>0){
+    //  refineFeatures(p_matched_2);//refine u1c v1c
+      refinement(p_matched_2,method);//refine others
+    }
     removeOutliers(p_matched_2,method);
   }
 }
@@ -731,7 +936,7 @@ void Matcher::computeFeatures (uint8_t *I,const int32_t* dims,int32_t* &max1,int
   }
 }
 
-void Matcher::computePriorStatistics (vector<Matcher::p_match> &p_matched,int32_t method) {
+void Matcher::computePriorStatistics (vector<p_match> &p_matched,int32_t method) {
    
   // compute number of bins
   int32_t u_bin_num = (int32_t)ceil((float)dims_c[0]/(float)param.match_binsize);
@@ -748,7 +953,7 @@ void Matcher::computePriorStatistics (vector<Matcher::p_match> &p_matched,int32_
   
   // fill bin accumulator
   Matcher::delta delta_curr;
-  for (vector<Matcher::p_match>::iterator it=p_matched.begin(); it!=p_matched.end(); it++) {
+  for (vector<p_match>::iterator it=p_matched.begin(); it!=p_matched.end(); it++) {
 
     // method flow: compute position delta
     if (method==0) {
@@ -965,7 +1170,7 @@ inline void Matcher::findMatch (int32_t* m1,const int32_t &i1,int32_t* m2,const 
 
 void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
                         int32_t n1p,int32_t n2p,int32_t n1c,int32_t n2c,
-                        vector<Matcher::p_match> &p_matched,int32_t method,bool use_prior,Matrix *Tr_delta) {
+                        vector<p_match> &p_matched,int32_t method,bool use_prior,const Matrix *Tr_delta) {
 
   // descriptor step size (number of int32_t elements in struct)
   int32_t step_size = sizeof(Matcher::maximum)/sizeof(int32_t);
@@ -1035,7 +1240,7 @@ void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
 
         // add match if this pixel isn't matched yet
         if (*(M+getAddressOffsetImage(u1c,v1c,dims_c[0]))==0) {
-          p_matched.push_back(Matcher::p_match(u1p,v1p,i1p,-1,-1,-1,u1c,v1c,i1c,-1,-1,-1));
+          p_matched.push_back(p_match(u1p,v1p,i1p,-1,-1,-1,u1c,v1c,i1c,-1,-1,-1));
           *(M+getAddressOffsetImage(u1c,v1c,dims_c[0])) = 1;
         }
       }
@@ -1077,7 +1282,7 @@ void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
 
           // add match if this pixel isn't matched yet
           if (*(M+getAddressOffsetImage(u1c,v1c,dims_c[0]))==0) {
-            p_matched.push_back(Matcher::p_match(-1,-1,-1,-1,-1,-1,u1c,v1c,i1c,u2c,v2c,i2c));
+            p_matched.push_back(p_match(-1,-1,-1,-1,-1,-1,u1c,v1c,i1c,u2c,v2c,i2c));
             *(M+getAddressOffsetImage(u1c,v1c,dims_c[0])) = 1;
           }
         }
@@ -1094,6 +1299,26 @@ void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
     createIndexVector(m1c,n1c,k1c,u_bin_num,v_bin_num);
     createIndexVector(m2c,n2c,k2c,u_bin_num,v_bin_num);
     
+ /*   static int mytemp=0;
+    char filename[300];
+    sprintf(filename, "/media/jianzhuhuai0108/Mag/tempk1pandk1c%d.txt", mytemp);
+    ++mytemp;
+    std::ofstream output(filename, std::ios::out);
+    for (int jack=0; jack<n1p;++jack)
+    {
+        u1p = *(m1p+step_size*jack+0);
+        v1p = *(m1p+step_size*jack+1);
+        output<<u1p<<" "<<v1p<<endl;
+    }
+    output<<endl<<endl<<endl;
+    for (int jack=0; jack<n1c;++jack){
+        u1c = *(m1c+step_size*jack+0);
+        v1c = *(m1c+step_size*jack+1);
+        output<<u1c<<" "<<v1c<<endl;
+    }
+    output<<endl;
+    output.close();*/
+
     // for all points do
     for (i1p=0; i1p<n1p; i1p++) {
 
@@ -1147,7 +1372,7 @@ void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
         if (u1p>=u2p && u1c>=u2c) {
           
           // add match
-          p_matched.push_back(Matcher::p_match(u1p,v1p,i1p,u2p,v2p,i2p,
+          p_matched.push_back(p_match(u1p,v1p,i1p,u2p,v2p,i2p,
                                                u1c,v1c,i1c,u2c,v2c,i2c));
         }
       }
@@ -1186,7 +1411,7 @@ void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
           
           // add match if this pixel isn't matched yet
           if (*(M+getAddressOffsetImage(u1c,v1c,dims_c[0]))==0) {
-            p_matched.push_back(Matcher::p_match(u1p,v1p,i1p,u2p,v2p,i2p,
+            p_matched.push_back(p_match(u1p,v1p,i1p,u2p,v2p,i2p,
                                                  u1c,v1c,i1c,u2c,v2c,i2c));
             *(M+getAddressOffsetImage(u1c,v1c,dims_c[0])) = 1;
           }
@@ -1205,7 +1430,7 @@ void Matcher::matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
   delete []k2c;
 }
 
-void Matcher::removeOutliers (vector<Matcher::p_match> &p_matched,int32_t method) {
+void Matcher::removeOutliers (vector<p_match> &p_matched,int32_t method) {
   
   // do we have enough points for outlier removal?
   if (p_matched.size()<=3)
@@ -1221,9 +1446,9 @@ void Matcher::removeOutliers (vector<Matcher::p_match> &p_matched,int32_t method
   
   // create copy of p_matched, init vector with number of support points
   // and fill triangle point vector for delaunay triangulation
-  vector<Matcher::p_match> p_matched_copy;  
+  vector<p_match> p_matched_copy;  
   vector<int32_t> num_support;
-  for (vector<Matcher::p_match>::iterator it=p_matched.begin(); it!=p_matched.end(); it++) {
+  for (vector<p_match>::iterator it=p_matched.begin(); it!=p_matched.end(); it++) {
     p_matched_copy.push_back(*it);
     num_support.push_back(0);
     in.pointlist[k++] = it->u1c;
@@ -1494,13 +1719,13 @@ void Matcher::relocateMinimum(const uint8_t* I1_du,const uint8_t* I1_dv,const in
   v2 += (float)(min_ind/5)-2.0;
 }
 
-void Matcher::refinement (vector<Matcher::p_match> &p_matched,int32_t method) {
+void Matcher::refinement (vector<p_match> &p_matched,int32_t method) {
   
   // allocate aligned memory (32 bytes for 1 descriptors)
   uint8_t* desc_buffer = (uint8_t*)_mm_malloc(32*sizeof(uint8_t),16);
   
   // copy vector (for refill)
-  vector<Matcher::p_match> p_matched_copy = p_matched;
+  vector<p_match> p_matched_copy = p_matched;
   p_matched.clear();
   
   // create matrices for least square fitting
@@ -1537,7 +1762,7 @@ void Matcher::refinement (vector<Matcher::p_match> &p_matched,int32_t method) {
   }
   
   // for all matches do
-  for (vector<Matcher::p_match>::iterator it=p_matched_copy.begin(); it!=p_matched_copy.end(); it++) {
+  for (vector<p_match>::iterator it=p_matched_copy.begin(); it!=p_matched_copy.end(); it++) {
     
     // method: flow or quad matching
     if (method==0 || method==2) {
@@ -1591,4 +1816,4 @@ float Matcher::mean(const uint8_t* I,const int32_t &bpl,const int32_t &u_min,con
   return
     mean /= (float)((u_max-u_min+1)*(v_max-v_min+1));
 }
-
+}

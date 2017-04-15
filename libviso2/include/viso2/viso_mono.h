@@ -23,6 +23,7 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 #define VISO_MONO_H
 
 #include "viso.h"
+namespace libviso2 {
 
 class VisualOdometryMono : public VisualOdometry {
 
@@ -62,7 +63,11 @@ public:
   //                     an older coordinate system / time step than the previous one.
   // output: returns false if motion too small or an error occured
   bool process (uint8_t *I,int32_t* dims,bool replace=false);
-
+  //changed update motion method w.r.t process(), method 0 opencv 5 point algorithm, 1, viso2 monocular algorithm
+  bool process2 (uint8_t *I,int32_t* dims,bool replace=false, bool bUseViso2=false);
+  // use opencv five point algorithm to estimate monocular motion, method 0 opencv 5 point algorithm, 1, viso2 monocular algorithm
+  std::vector<double> estimateMotion2 (const std::vector<p_match> &p_matched,
+                                                     bool bUseViso2= false);
 private:
 
   template<class T> struct idx_cmp {
@@ -70,18 +75,20 @@ private:
     bool operator()(const size_t a, const size_t b) const { return arr[a] < arr[b]; }
     const T arr;
   };  
-
-  std::vector<double>  estimateMotion (std::vector<Matcher::p_match> p_matched);  
+public:
+  std::vector<double>  estimateMotion (const std::vector<p_match> &p_matched,
+                                       const std::vector<double> tr_delta= std::vector<double>(6,0));
+private:
   Matrix               smallerThanMedian (Matrix &X,double &median);
-  bool                 normalizeFeaturePoints (std::vector<Matcher::p_match> &p_matched,Matrix &Tp,Matrix &Tc);
-  void                 fundamentalMatrix (const std::vector<Matcher::p_match> &p_matched,const std::vector<int32_t> &active,Matrix &F);
-  void                 EtoRt(Matrix &E,Matrix &K,std::vector<Matcher::p_match> &p_matched,Matrix &X,Matrix &R,Matrix &t);
-  int32_t              triangulateChieral (std::vector<Matcher::p_match> &p_matched,Matrix &K,Matrix &R,Matrix &t,Matrix &X);
-  std::vector<int32_t> getInlier (std::vector<Matcher::p_match> &p_matched,Matrix &F);
+  bool                 normalizeFeaturePoints (std::vector<p_match> &p_matched,Matrix &Tp,Matrix &Tc);
+  void                 fundamentalMatrix (const std::vector<p_match> &p_matched,const std::vector<int32_t> &active,Matrix &F);
+  void                 EtoRt(Matrix &E,Matrix &K,const std::vector<p_match> &p_matched,Matrix &X,Matrix &R,Matrix &t);
+  int32_t              triangulateChieral (const std::vector<p_match> &p_matched,Matrix &K,Matrix &R,Matrix &t,Matrix &X);
+  std::vector<int32_t> getInlier (const std::vector<p_match> &p_matched,Matrix &F);
   
   // parameters
   parameters param;  
 };
-
+}
 #endif // VISO_MONO_H
 

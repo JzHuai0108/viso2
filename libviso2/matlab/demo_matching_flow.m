@@ -9,7 +9,7 @@ I1c = imread('../img/I1c.png');
 %I1c = rgb2gray(imread('/home/geiger/test_data/2013_04_29_drive_0018_extract/image_03/data/0000000337.png'));
 
 % matching parameters
-param.nms_n                  = 4;   % non-max-suppression: min. distance between maxima (in pixels)
+param.nms_n                  = 10;   % non-max-suppression: min. distance between maxima (in pixels)
 param.nms_tau                = 50;  % non-max-suppression: interest point peakiness threshold
 param.match_binsize          = 50;  % matching bin width/height (affects efficiency only)
 param.match_radius           = 200; % matching radius (du/dv in pixels)

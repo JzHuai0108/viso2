@@ -24,7 +24,7 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 #include <math.h>
 
 using namespace std;
-
+namespace libviso2{
 VisualOdometry::VisualOdometry (parameters param) : param(param) {
   J         = 0;
   p_observe = 0;
@@ -82,6 +82,17 @@ Matrix VisualOdometry::transformationVectorToMatrix (vector<double> tr) {
   Tr.val[3][0] = 0;               Tr.val[3][1] = 0;               Tr.val[3][2] = 0;      Tr.val[3][3] = 1;
   return Tr;
 }
+vector<double> VisualOdometry::transformationMatrixToVector (Matrix Tr) {
+  vector<double> tr(6);
+  // extract parameters
+  tr[0]= atan2(-Tr.val[1][2],Tr.val[2][2]);//rx
+  tr[1]=asin(Tr.val[0][2]);//ry
+  tr[2]=atan2(-Tr.val[0][1], Tr.val[0][0]);//rz
+  tr[3]=Tr.val[0][3];//tx
+  tr[4]=Tr.val[1][3];//ty
+  tr[5]=Tr.val[2][3];//tz
+  return tr;
+}
 
 vector<int32_t> VisualOdometry::getRandomSample(int32_t N,int32_t num) {
 
@@ -103,4 +114,5 @@ vector<int32_t> VisualOdometry::getRandomSample(int32_t N,int32_t num) {
   
   // return sample
   return sample;
+}
 }

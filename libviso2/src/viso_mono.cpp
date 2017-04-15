@@ -20,10 +20,16 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 */
 
 #include "viso_mono.h"
+#ifdef USE_OPENCV
+#include "five-point.h"
+#endif
+#ifdef USE_NGHIAHO
+#include "5point.h"
+#endif
 
 using namespace std;
-
-VisualOdometryMono::VisualOdometryMono (parameters param) : param(param), VisualOdometry((VisualOdometry::parameters)param) {
+namespace libviso2{
+VisualOdometryMono::VisualOdometryMono (parameters param_) : VisualOdometry((VisualOdometry::parameters)param_), param(param_) {
 }
 
 VisualOdometryMono::~VisualOdometryMono () {
@@ -32,12 +38,35 @@ VisualOdometryMono::~VisualOdometryMono () {
 bool VisualOdometryMono::process (uint8_t *I,int32_t* dims,bool replace) {
   matcher->pushBack(I,dims,replace);
   matcher->matchFeatures(0);
+  p_all_matched= matcher->getMatches();
   matcher->bucketFeatures(param.bucket.max_features,param.bucket.bucket_width,param.bucket.bucket_height);                          
   p_matched = matcher->getMatches();
   return updateMotion();
 }
+bool VisualOdometryMono::process2 (uint8_t *I,int32_t* dims,bool replace, bool bUseViso2) {
+  matcher->pushBack(I,dims,replace);
+  matcher->matchFeatures(0);
+  p_all_matched= matcher->getMatches();
+  matcher->bucketFeatures(param.bucket.max_features,param.bucket.bucket_width,param.bucket.bucket_height);
+  p_matched = matcher->getMatches();
 
-vector<double> VisualOdometryMono::estimateMotion (vector<Matcher::p_match> p_matched) {
+  // estimate motion
+  vector<double> tr_delta = estimateMotion2(p_matched, bUseViso2);
+
+  // on failure
+  if (tr_delta.size()!=6)
+    return false;
+
+  // set transformation matrix (previous to current frame)
+  Tr_delta = transformationVectorToMatrix(tr_delta);
+  Tr_valid = true;
+
+  // success
+  return true;
+}
+
+vector<double> VisualOdometryMono::estimateMotion (const vector<p_match> &p_matched,
+                                                   const std::vector<double> tr_delta_init) {
 
   // get number of matches
   int32_t N = p_matched.size();
@@ -50,7 +79,7 @@ vector<double> VisualOdometryMono::estimateMotion (vector<Matcher::p_match> p_ma
     
   // normalize feature points and return on errors
   Matrix Tp,Tc;
-  vector<Matcher::p_match> p_matched_normalized = p_matched;
+  vector<p_match> p_matched_normalized = p_matched;
   if (!normalizeFeaturePoints(p_matched_normalized,Tp,Tc))
     return vector<double>();
 
@@ -158,6 +187,141 @@ vector<double> VisualOdometryMono::estimateMotion (vector<Matcher::p_match> p_ma
   return tr_delta;
 }
 
+vector<double> VisualOdometryMono::estimateMotion2 (const vector<p_match> &p_matched,
+                                                    bool bUseViso2) {
+    Matrix R= Matrix(3,3);
+    Matrix t = Matrix(3,1);
+    //observations: both OpenCV findEssentialMat(5 point) and findFundamentalMat(8 point) works well fot KITTI dataset
+    // which was well rectified. viso2 8 point algorithm also worked fine but somewhat worse than OpenCV 5 point algorithm on KITTI dataset
+    // in terms of speed, OpenCV 5 point is much faster than viso2 8 point
+    if(!bUseViso2){// opencv 3.0 five-point.cpp
+        // get number of matches
+        int32_t point_count  = p_matched.size();
+        if (point_count<10){
+            return vector<double>();
+        }
+        using namespace cv;
+        cv::Mat cameraMatrix=(cv::Mat_<double>(3,3) << param.calib.f,0,param.calib.cu, 0, param.calib.f, param.calib.cv,0,0,1);
+        cv::Mat Rf2s=cv::Mat::eye(3,3, CV_64F); //rotation from first to second camera frame
+        cv::Mat tfins=cv::Mat::zeros(3,1, CV_64F);  //position of first camera frame in second camera frame
+
+        vector<Point2f> points1(point_count);
+        vector<Point2f> points2(point_count);
+        for (int32_t kettle=0;kettle<point_count;++kettle)
+        {
+            points1[kettle].x=p_matched[kettle].u1p;
+            points1[kettle].y=p_matched[kettle].v1p;
+            points2[kettle].x=p_matched[kettle].u1c;
+            points2[kettle].y=p_matched[kettle].v1c;
+        }
+        int num_inliers=ExtractCameras( points1,  points2, Rf2s, tfins, cameraMatrix);
+        if(num_inliers<10){
+            cout<<"Insufficient inliers "<< num_inliers<<" of bucketed matches "<<point_count<<endl;
+            return vector<double>();
+        }
+
+
+        R.val[0][0]= Rf2s.at<double>(0,0); R.val[0][1]= Rf2s.at<double>(0,1); R.val[0][2]= Rf2s.at<double>(0,2);
+        R.val[1][0]= Rf2s.at<double>(1,0); R.val[1][1]= Rf2s.at<double>(1,1); R.val[1][2]= Rf2s.at<double>(1,2);
+        R.val[2][0]= Rf2s.at<double>(2,0); R.val[2][1]= Rf2s.at<double>(2,1); R.val[2][2]= Rf2s.at<double>(2,2);
+
+        t.val[0][0]= tfins.at<double>(0); t.val[1][0]= tfins.at<double>(1); t.val[2][0]= tfins.at<double>(2);
+
+        /*cv::Mat t_hat = (cv::Mat_<double>(3,3)<<
+     0, -tfins.at<double>(2), tfins.at<double>(1),
+        tfins.at<double>(2), 0, -tfins.at<double>(0),
+        -tfins.at<double>(1), tfins.at<double>(0), 0);
+    cv::Mat Fmat= cameraMatrix.inv()*t_hat*Rf2s*cameraMatrix.inv();
+    Matrix F(3,3);
+    F.val[0][0]= Fmat.at<double>(0,0); F.val[0][1]= Fmat.at<double>(0,1); F.val[0][2]= Fmat.at<double>(0,2);
+    F.val[1][0]= Fmat.at<double>(1,0); F.val[1][1]= Fmat.at<double>(1,1); F.val[1][2]= Fmat.at<double>(1,2);
+    F.val[2][0]= Fmat.at<double>(2,0); F.val[2][1]= Fmat.at<double>(2,1); F.val[2][2]= Fmat.at<double>(2,2);
+
+    inliers = getInlier(p_matched, F);*/ //TODO: getInliers not working well with this F
+    }
+    else{
+        // get number of matches
+        int32_t N = p_matched.size();
+        if (N<10)
+            return vector<double>();
+
+        // create calibration matrix
+        double K_data[9] = {param.calib.f,0,param.calib.cu,0,param.calib.f,param.calib.cv,0,0,1};
+        Matrix K(3,3,K_data);
+
+        // normalize feature points and return on errors
+        Matrix Tp,Tc;
+        vector<p_match> p_matched_normalized = p_matched;
+        if (!normalizeFeaturePoints(p_matched_normalized,Tp,Tc))
+            return vector<double>();
+
+        // initial RANSAC estimate of F
+        Matrix E,F;
+        inliers.clear();
+        for (int32_t k=0;k<param.ransac_iters;k++) {
+
+            // draw random sample set
+            vector<int32_t> active = getRandomSample(N,8);
+
+            // estimate fundamental matrix and get inliers
+            fundamentalMatrix(p_matched_normalized,active,F);
+            vector<int32_t> inliers_curr = getInlier(p_matched_normalized,F);
+
+            // update model if we are better
+            if (inliers_curr.size()>inliers.size())
+                inliers = inliers_curr;
+        }
+
+        // are there enough inliers?
+        if (inliers.size()<10)
+            return vector<double>();
+
+        // refine F using all inliers
+        fundamentalMatrix(p_matched_normalized,inliers,F);
+
+        // denormalise and extract essential matrix
+        F = ~Tc*F*Tp;
+        E = ~K*F*K;
+
+        // re-enforce rank 2 constraint on essential matrix
+        Matrix U,W,V;
+        E.svd(U,W,V);
+        W.val[2][0] = 0;
+        E = U*Matrix::diag(W)*~V;
+
+        // compute 3d points X and R|t up to scale
+        Matrix X;
+        EtoRt(E,K,p_matched,X,R,t);
+        // normalize 3d points and remove points behind image plane
+        X = X/X.getMat(3,0,3,-1);
+        vector<int32_t> pos_idx;
+        for (int32_t i=0; i<X.n; i++)
+            if (X.val[2][i]>0)
+                pos_idx.push_back(i);
+        Matrix X_plane = X.extractCols(pos_idx);
+
+        // we need at least 10 points to proceed
+        if (X_plane.n<10)
+            return vector<double>();
+    }
+    t = t*0.1/t.l2norm();
+
+    // compute rotation angles
+    double ry = asin(R.val[0][2]);
+    double rx = asin(-R.val[1][2]/cos(ry));
+    double rz = asin(-R.val[0][1]/cos(ry));
+
+    // return parameter vector
+    vector<double> tr_delta;
+    tr_delta.resize(6);
+    tr_delta[0] = rx;
+    tr_delta[1] = ry;
+    tr_delta[2] = rz;
+    tr_delta[3] = t.val[0][0];
+    tr_delta[4] = t.val[1][0];
+    tr_delta[5] = t.val[2][0];
+    return tr_delta;
+}
 Matrix VisualOdometryMono::smallerThanMedian (Matrix &X,double &median) {
   
   // set distance and index vector
@@ -183,11 +347,11 @@ Matrix VisualOdometryMono::smallerThanMedian (Matrix &X,double &median) {
 	return X_small;
 }
 
-bool VisualOdometryMono::normalizeFeaturePoints(vector<Matcher::p_match> &p_matched,Matrix &Tp,Matrix &Tc) {
+bool VisualOdometryMono::normalizeFeaturePoints(vector<p_match> &p_matched,Matrix &Tp,Matrix &Tc) {
   
   // shift origins to centroids
   double cpu=0,cpv=0,ccu=0,ccv=0;
-  for (vector<Matcher::p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
+  for (vector<p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
     cpu += it->u1p;
     cpv += it->v1p;
     ccu += it->u1c;
@@ -197,7 +361,7 @@ bool VisualOdometryMono::normalizeFeaturePoints(vector<Matcher::p_match> &p_matc
   cpv /= (double)p_matched.size();
   ccu /= (double)p_matched.size();
   ccv /= (double)p_matched.size();
-  for (vector<Matcher::p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
+  for (vector<p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
     it->u1p -= cpu;
     it->v1p -= cpv;
     it->u1c -= ccu;
@@ -206,7 +370,7 @@ bool VisualOdometryMono::normalizeFeaturePoints(vector<Matcher::p_match> &p_matc
   
   // scale features such that mean distance from origin is sqrt(2)
   double sp=0,sc=0;
-  for (vector<Matcher::p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
+  for (vector<p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
     sp += sqrt(it->u1p*it->u1p+it->v1p*it->v1p);
     sc += sqrt(it->u1c*it->u1c+it->v1c*it->v1c);
   }
@@ -214,7 +378,7 @@ bool VisualOdometryMono::normalizeFeaturePoints(vector<Matcher::p_match> &p_matc
     return false;
   sp = sqrt(2.0)*(double)p_matched.size()/sp;
   sc = sqrt(2.0)*(double)p_matched.size()/sc;
-  for (vector<Matcher::p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
+  for (vector<p_match>::iterator it = p_matched.begin(); it!=p_matched.end(); it++) {
     it->u1p *= sp;
     it->v1p *= sp;
     it->u1c *= sc;
@@ -231,7 +395,7 @@ bool VisualOdometryMono::normalizeFeaturePoints(vector<Matcher::p_match> &p_matc
   return true;
 }
 
-void VisualOdometryMono::fundamentalMatrix (const vector<Matcher::p_match> &p_matched,const vector<int32_t> &active,Matrix &F) {
+void VisualOdometryMono::fundamentalMatrix (const vector<p_match> &p_matched,const vector<int32_t> &active,Matrix &F) {
   
   // number of active p_matched
   int32_t N = active.size();
@@ -239,7 +403,7 @@ void VisualOdometryMono::fundamentalMatrix (const vector<Matcher::p_match> &p_ma
   // create constraint matrix A
   Matrix A(N,9);
   for (int32_t i=0; i<N; i++) {
-    Matcher::p_match m = p_matched[active[i]];
+    p_match m = p_matched[active[i]];
     A.val[i][0] = m.u1c*m.u1p;
     A.val[i][1] = m.u1c*m.v1p;
     A.val[i][2] = m.u1c;
@@ -264,7 +428,7 @@ void VisualOdometryMono::fundamentalMatrix (const vector<Matcher::p_match> &p_ma
   F = U*Matrix::diag(W)*~V;
 }
 
-vector<int32_t> VisualOdometryMono::getInlier (vector<Matcher::p_match> &p_matched,Matrix &F) {
+vector<int32_t> VisualOdometryMono::getInlier ( const vector<p_match> &p_matched,Matrix &F) {
 
   // extract fundamental matrix
   double f00 = F.val[0][0]; double f01 = F.val[0][1]; double f02 = F.val[0][2];
@@ -303,7 +467,7 @@ vector<int32_t> VisualOdometryMono::getInlier (vector<Matcher::p_match> &p_match
     
     // sampson distance
     double d = x2tFx1*x2tFx1 / (Fx1u*Fx1u+Fx1v*Fx1v+Ftx2u*Ftx2u+Ftx2v*Ftx2v);
-    
+
     // check threshold
     if (fabs(d)<param.inlier_threshold)
       inliers.push_back(i);
@@ -313,7 +477,7 @@ vector<int32_t> VisualOdometryMono::getInlier (vector<Matcher::p_match> &p_match
   return inliers;
 }
 
-void VisualOdometryMono::EtoRt(Matrix &E,Matrix &K,vector<Matcher::p_match> &p_matched,Matrix &X,Matrix &R,Matrix &t) {
+void VisualOdometryMono::EtoRt(Matrix &E,Matrix &K,const vector<p_match> &p_matched,Matrix &X,Matrix &R,Matrix &t) {
 
   // hartley matrices
   double W_data[9] = {0,-1,0,+1,0,0,0,0,1};
@@ -360,7 +524,7 @@ void VisualOdometryMono::EtoRt(Matrix &E,Matrix &K,vector<Matcher::p_match> &p_m
   }
 }
 
-int32_t VisualOdometryMono::triangulateChieral (vector<Matcher::p_match> &p_matched,Matrix &K,Matrix &R,Matrix &t,Matrix &X) {
+int32_t VisualOdometryMono::triangulateChieral (const vector<p_match> &p_matched,Matrix &K,Matrix &R,Matrix &t,Matrix &X) {
   
   // init 3d point matrix
   X = Matrix(4,p_matched.size());
@@ -397,4 +561,5 @@ int32_t VisualOdometryMono::triangulateChieral (vector<Matcher::p_match> &p_matc
   
   // return number of inliers
   return num;
+}
 }

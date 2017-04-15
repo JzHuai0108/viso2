@@ -24,6 +24,10 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 
 #include "matrix.h"
 #include "matcher.h"
+#ifdef USE_OPENCV
+#include <opencv2/core/core.hpp>
+#endif
+namespace libviso2 {
 
 class VisualOdometry {
 
@@ -71,7 +75,7 @@ public:
   // call this function instead of the specialized ones, if you already have
   // feature matches, and simply want to compute visual odometry from them, without
   // using the internal matching functions.
-  bool process (std::vector<Matcher::p_match> p_matched_) {
+  bool process (std::vector<p_match> p_matched_) {
     p_matched = p_matched_;
     return updateMotion();
   }
@@ -84,9 +88,17 @@ public:
   // has failed. this is useful if you wish to linearly extrapolate occasional
   // frames for which no correspondences have been found
   Matrix getMotion () { return Tr_delta; }
-
+  //column major data from Eigen::Matrix4d
+  void setMotion (double *data) {
+      Matrix& Tr=Tr_delta;
+      Tr.val[0][0] = data[0]; Tr.val[0][1] = data[4];  Tr.val[0][2] = data[8];  Tr.val[0][3] = data[12];
+      Tr.val[1][0] = data[1]; Tr.val[1][1] = data[5];  Tr.val[1][2] = data[9];  Tr.val[1][3] = data[13];
+      Tr.val[2][0] = data[2]; Tr.val[2][1] = data[6];  Tr.val[2][2] = data[10]; Tr.val[2][3] = data[14];
+      Tr.val[3][0] = data[3]; Tr.val[3][1] = data[7];  Tr.val[3][2] = data[11]; Tr.val[3][3] = data[15];
+      Tr_valid = true;
+  }
   // returns previous to current feature matches from internal matcher
-  std::vector<Matcher::p_match> getMatches () { return matcher->getMatches(); }
+  std::vector<p_match> getMatches () { return matcher->getMatches(); }
   
   // returns the number of successfully matched points, after bucketing
   int32_t getNumberOfMatches () { return p_matched.size(); }
@@ -115,30 +127,38 @@ protected:
 
   // calls bucketing and motion estimation
   bool updateMotion ();
-
+public:
   // compute transformation matrix from transformation vector  
   Matrix transformationVectorToMatrix (std::vector<double> tr);
+  std::vector<double> transformationMatrixToVector (Matrix Tr);
 
   // compute motion from previous to current coordinate system
   // if motion could not be computed, resulting vector will be of size 0
-  virtual std::vector<double> estimateMotion (std::vector<Matcher::p_match> p_matched) = 0;
+  virtual std::vector<double> estimateMotion (const std::vector<p_match> &p_matched,
+                                              const std::vector<double> tr_delta= std::vector<double>(6,0)) = 0;
   
   // get random and unique sample of num numbers from 1:N
   std::vector<int32_t> getRandomSample (int32_t N,int32_t num);
-
+  std::vector<p_match>  getAllMatches(){return p_all_matched;}
+#ifdef USE_OPENCV
+  // get viso2 descriptors for all features in p_all_matches, based on the former left image
+  cv::Mat getAllDescriptors();
+#endif
+public:
   Matrix                         Tr_delta;   // transformation (previous -> current frame)  
   bool                           Tr_valid;   // motion estimate exists?
   Matcher                       *matcher;    // feature matcher
+protected:
   std::vector<int32_t>           inliers;    // inlier set
   double                        *J;          // jacobian
   double                        *p_observe;  // observed 2d points
   double                        *p_predict;  // predicted 2d points
-  std::vector<Matcher::p_match>  p_matched;  // feature point matches
-  
+  std::vector<p_match>  p_matched;  // bucketed feature point matches
+  std::vector<p_match> p_all_matched; // all feature point matches
 private:
   
   parameters                    param;     // common parameters
 };
-
+}
 #endif // VISO_H
 

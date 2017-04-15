@@ -23,9 +23,15 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 #include <fstream>
 
 using namespace std;
-
+namespace libviso2{
 Reconstruction::Reconstruction () {
   K = Matrix::eye(3);
+
+  // First transformation matrix
+  Tr_total.push_back(Matrix::eye(4));
+
+  // First inverse transformation matrix
+  Tr_inv_total.push_back(Matrix::eye(4));
 }
 
 Reconstruction::~Reconstruction () {
@@ -45,9 +51,12 @@ void Reconstruction::setCalibration (FLOAT f,FLOAT cu,FLOAT cv) {
   Tr_cam_road.val[0][3] = 0;
   Tr_cam_road.val[1][3] = -cam_height;
   Tr_cam_road.val[2][3] = 0;
+
+  // First camera projection matrix
+  P_total.push_back(K*Matrix::eye(4).getMat(0,0,2,3));
 }
 
-void Reconstruction::update (vector<Matcher::p_match> p_matched,Matrix Tr,int32_t point_type,int32_t min_track_length,double max_dist,double min_angle) {
+void Reconstruction::update (vector<p_match> p_matched,Matrix Tr,int32_t point_type,int32_t min_track_length,double max_dist,double min_angle) {
   
   // update transformation vector
   Matrix Tr_total_curr;
@@ -61,11 +70,11 @@ void Reconstruction::update (vector<Matcher::p_match> p_matched,Matrix Tr,int32_
   P_total.push_back(P_total_curr);
   
   // current frame
-  int32_t current_frame = Tr_total.size();
+  int32_t current_frame = Tr_total.size() - 1; // 0-based frame number
   
   // create index vector
   int32_t track_idx_max = 0;
-  for (vector<Matcher::p_match>::iterator m=p_matched.begin(); m!=p_matched.end(); m++)
+  for (vector<p_match>::iterator m=p_matched.begin(); m!=p_matched.end(); m++)
     if (m->i1p > track_idx_max)
       track_idx_max = m->i1p;
   for (vector<track>::iterator t=tracks.begin(); t!=tracks.end(); t++)
@@ -78,7 +87,7 @@ void Reconstruction::update (vector<Matcher::p_match> p_matched,Matrix Tr,int32_
     track_idx[tracks[i].last_idx] = i;
   
   // associate matches to tracks
-  for (vector<Matcher::p_match>::iterator m=p_matched.begin(); m!=p_matched.end(); m++) {
+  for (vector<p_match>::iterator m=p_matched.begin(); m!=p_matched.end(); m++) {
     
     // track index (-1 = no existing track)
     int32_t idx = track_idx[m->i1p];
@@ -386,4 +395,5 @@ void Reconstruction::testJacobian() {
   delete p_observe;
   delete p_predict;
   cout << "=================================" << endl;
+}
 }

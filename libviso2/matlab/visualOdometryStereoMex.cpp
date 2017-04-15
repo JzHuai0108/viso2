@@ -141,6 +141,42 @@ void mexFunction (int nlhs,mxArray *plhs[],int nrhs,const mxArray *prhs[]) {
     free(I1_);
     free(I2_);
     
+  // process
+  } else if (!strcmp(command,"process_matched")) {
+    
+    // check for proper number of arguments
+    if (nrhs!=1+1)
+      mexErrMsgTxt("1 inputs required: p_matched (NxM).");
+    if (nlhs!=1) 
+      mexErrMsgTxt("1 outputs required: Tr (transformation from previous to current frame.");  
+    
+    // make sure the second input argument is type double
+    if( !mxIsDouble(prhs[1]) || mxIsComplex(prhs[1]))
+        mexErrMsgTxt("Input matrix must be type double.");
+    
+    // get input
+    double *matches_in = mxGetPr(prhs[1]);
+    int32_t nCol       = mxGetN(prhs[1]); // number of columns
+    int32_t nRow       = mxGetM(prhs[1]); // number of rows
+    
+    // init vector of matches
+    Matcher::p_match p;
+    vector<Matcher::p_match> p_matched;
+    for (int32_t r=0; r<nCol; r++) {
+       p = Matcher::p_match(matches_in[r*nRow+0],matches_in[r*nRow+1],r,matches_in[r*nRow+2],matches_in[r*nRow+3],r,
+                            matches_in[r*nRow+4],matches_in[r*nRow+5],r,matches_in[r*nRow+6],matches_in[r*nRow+7],r);
+       p_matched.push_back(p);
+    }
+     
+    // compute motion
+    viso->process(p_matched);
+     
+    // return motion estimate (mapping from previous to current frame)
+    Matrix Tr_delta = ~(viso->getMotion());
+    const int tr_dims[] = {4,4};
+    plhs[0] = mxCreateNumericArray(2,tr_dims,mxDOUBLE_CLASS,mxREAL);
+    Tr_delta.getData((double*)mxGetPr(plhs[0]));
+    
   // query number of matches
   } else if (!strcmp(command,"num_matches")) {
     const int dims[] = {1,1};

@@ -30,8 +30,14 @@ Street, Fifth Floor, Boston, MA 02110-1301, USA
 #include <emmintrin.h>
 #include <algorithm>
 #include <vector>
-
+#include "p_match.h"
 #include "matrix.h"
+namespace libviso2{
+//copied from fast_score.hpp of opencv
+void makeOffsets(int pixel[25], int row_stride, int patternSize);
+
+template<int patternSize>
+int cornerScore(const unsigned char* ptr, const int pixel[], int threshold);
 
 class Matcher {
 
@@ -64,7 +70,7 @@ public:
       multi_stage            = 1;
       half_resolution        = 1;
       refinement             = 1;
-    }
+    }    
   };
 
   // constructor (with default parameters)
@@ -81,22 +87,6 @@ public:
     param.base = base;
   }
 
-  // structure for storing matches
-  struct p_match {
-    float   u1p,v1p; // u,v-coordinates in previous left  image
-    int32_t i1p;     // feature index (for tracking)
-    float   u2p,v2p; // u,v-coordinates in previous right image
-    int32_t i2p;     // feature index (for tracking)
-    float   u1c,v1c; // u,v-coordinates in current  left  image
-    int32_t i1c;     // feature index (for tracking)
-    float   u2c,v2c; // u,v-coordinates in current  right image
-    int32_t i2c;     // feature index (for tracking)
-    p_match(){}
-    p_match(float u1p,float v1p,int32_t i1p,float u2p,float v2p,int32_t i2p,
-            float u1c,float v1c,int32_t i1c,float u2c,float v2c,int32_t i2c):
-            u1p(u1p),v1p(v1p),i1p(i1p),u2p(u2p),v2p(v2p),i2p(i2p),
-            u1c(u1c),v1c(v1c),i1c(i1c),u2c(u2c),v2c(v2c),i2c(i2c) {}
-  };
 
   // computes features from left/right images and pushes them back to a ringbuffer,
   // which interally stores the features of the current and previous image pair
@@ -120,29 +110,46 @@ public:
   // input: method ... 0 = flow, 1 = stereo, 2 = quad matching
   //        Tr_delta: uses motion from previous frame to better search for
   //                  matches, if specified
-  void matchFeatures(int32_t method, Matrix *Tr_delta = 0);
+  void matchFeatures(int32_t method, const Matrix *Tr_delta = 0);
 
   // feature bucketing: keeps only max_features per bucket, where the domain
   // is split into buckets of size (bucket_width,bucket_height)
   void bucketFeatures(int32_t max_features,float bucket_width,float bucket_height);
 
   // return vector with matched feature points and indices
-  std::vector<Matcher::p_match> getMatches() { return p_matched_2; }
+  std::vector<p_match> getMatches() { return p_matched_2; }
 
   // given a vector of inliers computes gain factor between the current and
   // the previous frame. this function is useful if you want to reconstruct 3d
   // and you want to cancel the change of (unknown) camera gain.
   float getGain (std::vector<int32_t> inliers);
 
+  //refine feature positions with FAST corner score in case of half_resolution,
+  // choose the best pixel from 5 connected pixels centered on current pixel
+  void refineFeatures(std::vector<p_match> & vMatches);
+  int32_t getNumDenseFeatures(bool left)
+  {
+      if(left)
+          return n1c2;
+      else
+          return n2c2;
+  }
+  int32_t getNumSparseFeatures(bool left)
+  {
+      if(left)
+          return n1c1;
+      else
+          return n2c1;
+  }
 private:
 
   // structure for storing interest points
   struct maximum {
     int32_t u;   // u-coordinate
     int32_t v;   // v-coordinate
-    int32_t val; // value
-    int32_t c;   // class
-    int32_t d1,d2,d3,d4,d5,d6,d7,d8; // descriptor
+    int32_t val; // blob filter or checkerboard filter quantitized response
+    int32_t c;   // class (0 blob min, 1 blob max, 2 corner min, 3 corner max)
+    int32_t d1,d2,d3,d4,d5,d6,d7,d8; // descriptor (16 bytes horizontal and 16 bytes vertical Sobel responses intertwined)
     maximum() {}
     maximum(int32_t u,int32_t v,int32_t val,int32_t c):u(u),v(v),val(val),c(c) {}
   };
@@ -192,20 +199,22 @@ private:
   //          I_du ..... gradient in horizontal direction
   //          I_dv ..... gradient in vertical direction
   // WARNING: max,I_du,I_dv has to be freed by yourself!
+  // max1 sparse descriptors, max2 dense descriptors, each 16byte aligned memory, descriptor is acctually 4x8x8=256 bits
   void computeFeatures (uint8_t *I,const int32_t* dims,int32_t* &max1,int32_t &num1,int32_t* &max2,int32_t &num2,uint8_t* &I_du,uint8_t* &I_dv,uint8_t* &I_du_full,uint8_t* &I_dv_full);
 
   // matching functions
-  void computePriorStatistics (std::vector<Matcher::p_match> &p_matched,int32_t method);
+  void computePriorStatistics (std::vector<p_match> &p_matched,int32_t method);
   void createIndexVector (int32_t* m,int32_t n,std::vector<int32_t> *k,const int32_t &u_bin_num,const int32_t &v_bin_num);
+  // u_, v_ predicted feature position
   inline void findMatch (int32_t* m1,const int32_t &i1,int32_t* m2,const int32_t &step_size,
                          std::vector<int32_t> *k2,const int32_t &u_bin_num,const int32_t &v_bin_num,const int32_t &stat_bin,
                          int32_t& min_ind,int32_t stage,bool flow,bool use_prior,double u_=-1,double v_=-1);
   void matching (int32_t *m1p,int32_t *m2p,int32_t *m1c,int32_t *m2c,
                  int32_t n1p,int32_t n2p,int32_t n1c,int32_t n2c,
-                 std::vector<Matcher::p_match> &p_matched,int32_t method,bool use_prior,Matrix *Tr_delta = 0);
+                 std::vector<p_match> &p_matched,int32_t method,bool use_prior,const Matrix *Tr_delta = 0);
 
   // outlier removal
-  void removeOutliers (std::vector<Matcher::p_match> &p_matched,int32_t method);
+  void removeOutliers (std::vector<p_match> &p_matched,int32_t method);
 
   // parabolic fitting
   bool parabolicFitting(const uint8_t* I1_du,const uint8_t* I1_dv,const int32_t* dims1,
@@ -219,7 +228,7 @@ private:
                        const float &u1,const float &v1,
                        float       &u2,float       &v2,
                        uint8_t* desc_buffer);
-  void refinement (std::vector<Matcher::p_match> &p_matched,int32_t method);
+  void refinement (std::vector<p_match> &p_matched,int32_t method);
 
   // mean for gain computation
   inline float mean(const uint8_t* I,const int32_t &bpl,const int32_t &u_min,const int32_t &u_max,const int32_t &v_min,const int32_t &v_max);
@@ -228,8 +237,8 @@ private:
   parameters param;
   int32_t    margin;
   
-  int32_t *m1p1,*m2p1,*m1c1,*m2c1;
-  int32_t *m1p2,*m2p2,*m1c2,*m2c2;
+  int32_t *m1p1,*m2p1,*m1c1,*m2c1; //maxima left previous sparse, maxima right previous sparse, ...
+  int32_t *m1p2,*m2p2,*m1c2,*m2c2; // maxima left previous dense
   int32_t n1p1,n2p1,n1c1,n2c1;
   int32_t n1p2,n2p2,n1c2,n2c2;
   uint8_t *I1p,*I2p,*I1c,*I2c;
@@ -239,10 +248,10 @@ private:
   uint8_t *I1p_dv_full,*I2p_dv_full,*I1c_dv_full,*I2c_dv_full; // half-res matching
   int32_t dims_p[3],dims_c[3];
 
-  std::vector<Matcher::p_match> p_matched_1;
-  std::vector<Matcher::p_match> p_matched_2;
+  std::vector<p_match> p_matched_1;
+  std::vector<p_match> p_matched_2;
   std::vector<Matcher::range>   ranges;
 };
-
+}
 #endif
 
