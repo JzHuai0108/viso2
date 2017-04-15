@@ -1,38 +1,23 @@
-cmake_minimum_required(VERSION 2.8.3)
-project(libviso2)
+# project
+cmake_minimum_required (VERSION 2.6)
+project (libviso2)
 
-find_package(catkin REQUIRED )
+# directories
+set (LIBVISO2_SRC_DIR src)
 
-#set(CMAKE_CXX_FLAGS "-msse3")
-add_definitions(-msse3)
+# include directory
+include_directories("${LIBVISO2_SRC_DIR}")
 
-catkin_package(
-  INCLUDE_DIRS libviso2/src
-  LIBRARIES viso2
-)
+# use sse3 instruction set
+SET(CMAKE_CXX_FLAGS "-msse3")
 
-include_directories(libviso2/src
-  ${catkin_INCLUDE_DIRS}
-)
+# sources
+FILE(GLOB LIBVISO2_SRC_FILES "src/*.cpp")
 
-add_library(viso2
-  libviso2/src/filter.cpp
-  libviso2/src/matcher.cpp
-  libviso2/src/matrix.cpp
-  libviso2/src/reconstruction.cpp
-  libviso2/src/triangle.cpp
-  libviso2/src/viso.cpp
-  libviso2/src/viso_mono.cpp
-  libviso2/src/viso_stereo.cpp)
+# make release version
+set(CMAKE_BUILD_TYPE Release)
 
-install(TARGETS viso2
-  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-
-install(DIRECTORY ${PROJECT_NAME}/src
-  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
-  PATTERN ".cpp" EXCLUDE
-)
+# demo program
+add_executable(viso2 ${LIBVISO2_SRC_FILES})
+target_link_libraries (viso2 png)
 
