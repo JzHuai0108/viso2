@@ -18,3 +18,7 @@ libviso2/libviso2/build
 */src/*/_*_.pyc
 */src/*/srv
 
+
+build/
+
+lib/
