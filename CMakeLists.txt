@@ -56,7 +56,7 @@ IF(HAVE_OPENCV)
     SET(OPENCV_INCLUDE_DIR $ENV{HOME}/OpenCV/local_install/include)
     SET(OPENCV_LIBRARY_DIR $ENV{HOME}/OpenCV/local_install/lib)
     set(OpenCV_LIBS opencv_core opencv_features2d opencv_flann opencv_gpu
-               opencv_nonfree opencv_highgui opencv_imgproc opencv_calib3d opencv_video)
+               opencv_highgui opencv_imgproc opencv_calib3d opencv_video)
     link_directories(${OPENCV_LIBRARY_DIR})
   ENDIF()
 
